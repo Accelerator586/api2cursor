@@ -13,6 +13,7 @@ from flask import Blueprint, request, jsonify
 
 import settings
 from config import Config
+from extensions import limiter
 from utils.http import build_anthropic_headers, forward_request, sse_response
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ bp = Blueprint('messages', __name__)
 
 
 @bp.route('/v1/messages', methods=['POST'])
+@limiter.limit(Config.RATE_LIMIT_API)
 def messages_passthrough():
     """透传 Anthropic Messages 请求，并在必要时补齐 thinking 兼容层。"""
     payload = request.get_json(force=True)
@@ -53,13 +55,31 @@ def messages_passthrough():
             if resp.status_code != 200:
                 body = resp.content.decode('utf-8', errors='replace')
                 logger.warning(f'上游返回 {resp.status_code}: {body[:300]}')
-                yield f'data: {json.dumps({"error": {"message": body, "type": "upstream_error"}})}\n\n'
+                yield (
+                    'data: '
+                    + json.dumps({
+                        'error': {
+                            'message': f'上游服务返回错误（HTTP {resp.status_code}）',
+                            'type': 'upstream_error',
+                        }
+                    })
+                    + '\n\n'
+                )
                 return
 
             yield from _process_stream(resp)
         except req_lib.RequestException as e:
             logger.error(f'请求上游失败: {e}')
-            yield f'data: {json.dumps({"error": {"message": str(e), "type": "proxy_error"}})}\n\n'
+            yield (
+                'data: '
+                + json.dumps({
+                    'error': {
+                        'message': '连接上游服务失败',
+                        'type': 'proxy_error',
+                    }
+                })
+                + '\n\n'
+            )
 
     return sse_response(generate())
 

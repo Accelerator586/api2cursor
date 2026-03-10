@@ -1,6 +1,9 @@
 """环境变量配置"""
 
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 
 class Config:
@@ -22,3 +25,22 @@ class Config:
     ACCESS_API_KEY = os.getenv('ACCESS_API_KEY', '')
     # 调试模式：开启后输出详细的请求/响应日志
     DEBUG = os.getenv('DEBUG', '').lower() in ('1', 'true', 'yes', 'on')
+    # 浏览器跨域白名单；未配置时默认不启用 CORS
+    CORS_ALLOWED_ORIGINS = tuple(
+        origin.strip()
+        for origin in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
+        if origin.strip()
+    )
+    # 最大请求体大小（字节）
+    MAX_CONTENT_LENGTH = int(os.getenv('MAX_CONTENT_LENGTH', str(10 * 1024 * 1024)))
+    # 速率限制
+    RATE_LIMIT_LOGIN = os.getenv('RATE_LIMIT_LOGIN', '5 per minute')
+    RATE_LIMIT_ADMIN = os.getenv('RATE_LIMIT_ADMIN', '30 per minute')
+    RATE_LIMIT_API = os.getenv('RATE_LIMIT_API', '120 per minute')
+    RATE_LIMIT_HEALTH = os.getenv('RATE_LIMIT_HEALTH', '60 per minute')
+
+    @classmethod
+    def log_security_warnings(cls):
+        """输出生产部署前需要关注的安全告警。"""
+        if not cls.ACCESS_API_KEY:
+            logger.warning('未配置 ACCESS_API_KEY；请勿将该服务直接暴露到公网。')

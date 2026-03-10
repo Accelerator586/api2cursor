@@ -26,6 +26,7 @@ from adapters.responses_cc_adapter import (
     responses_to_cc_response,
 )
 from config import Config
+from extensions import limiter
 from routes.common import (
     RouteContext,
     build_anthropic_target,
@@ -58,6 +59,7 @@ def _dbg(message: str) -> None:
 
 
 @bp.route('/v1/chat/completions', methods=['POST'])
+@limiter.limit(Config.RATE_LIMIT_API)
 def chat_completions():
     """处理聊天补全请求并按模型映射分发到不同后端。"""
     payload = request.get_json(force=True)

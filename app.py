@@ -6,13 +6,16 @@
   - 配置全局鉴权中间件
 """
 
+import hmac
 import logging
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import settings
 from config import Config
+from extensions import limiter
 from routes import register_routes
 
 logger = logging.getLogger(__name__)
@@ -25,8 +28,13 @@ def create_app():
     访问鉴权、健康检查以及蓝图注册。
     """
     app = Flask(__name__)
-    CORS(app)
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+    app.config['MAX_CONTENT_LENGTH'] = Config.MAX_CONTENT_LENGTH
+    if Config.CORS_ALLOWED_ORIGINS:
+        CORS(app, origins=Config.CORS_ALLOWED_ORIGINS)
+    limiter.init_app(app)
     settings.load()
+    Config.log_security_warnings()
 
     # ─── JSON 错误处理器 ──────────────────────────
 
@@ -39,6 +47,16 @@ def create_app():
     def method_not_allowed(e):
         """将不支持的请求方法统一转换为 JSON 405 响应。"""
         return jsonify({'error': {'message': '方法不允许', 'type': 'method_not_allowed'}}), 405
+
+    @app.errorhandler(413)
+    def request_too_large(e):
+        """将超过限制的请求体统一转换为 JSON 413 响应。"""
+        return jsonify({'error': {'message': '请求体过大', 'type': 'request_too_large'}}), 413
+
+    @app.errorhandler(429)
+    def rate_limit_exceeded(e):
+        """将速率限制错误统一转换为 JSON 429 响应。"""
+        return jsonify({'error': {'message': '请求过于频繁，请稍后再试', 'type': 'rate_limit_exceeded'}}), 429
 
     @app.errorhandler(500)
     def internal_error(e):
@@ -64,7 +82,7 @@ def create_app():
 
         auth = request.headers.get('Authorization', '')
         token = auth[7:] if auth.startswith('Bearer ') else request.headers.get('x-api-key', '')
-        if token != Config.ACCESS_API_KEY:
+        if not hmac.compare_digest(token or '', Config.ACCESS_API_KEY):
             logger.warning(f'鉴权拒绝: {request.path}')
             return jsonify({
                 'error': {'message': 'API 密钥无效', 'type': 'authentication_error'}
@@ -73,9 +91,10 @@ def create_app():
     # ─── 健康检查 ────────────────────────────────
 
     @app.route('/health', methods=['GET'])
+    @limiter.limit(Config.RATE_LIMIT_HEALTH)
     def health():
-        """返回服务健康状态和当前生效的上游地址。"""
-        return jsonify({'status': 'ok', 'target': settings.get_url()})
+        """返回服务健康状态。"""
+        return jsonify({'status': 'ok'})
 
     # ─── 注册路由蓝图 ────────────────────────────
 

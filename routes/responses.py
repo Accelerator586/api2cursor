@@ -16,6 +16,7 @@ from adapters.cc_anthropic_adapter import cc_to_messages_request, messages_to_cc
 from adapters.openai_compat_fixer import fix_response, fix_stream_chunk, normalize_request
 from adapters.responses_cc_adapter import ResponsesStreamConverter, cc_to_responses, responses_to_cc
 from config import Config
+from extensions import limiter
 from routes.common import (
     RouteContext,
     build_anthropic_target,
@@ -47,6 +48,7 @@ def _dbg(message: str) -> None:
 
 
 @bp.route('/v1/responses', methods=['POST'])
+@limiter.limit(Config.RATE_LIMIT_API)
 def responses_endpoint():
     """处理 Responses 请求并按模型映射分发。"""
     payload = request.get_json(force=True)

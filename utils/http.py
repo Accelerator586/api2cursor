@@ -81,17 +81,23 @@ def forward_request(url, headers, payload, stream=False):
             body = resp.content.decode('utf-8', errors='replace')
             logger.warning(f'上游返回 {resp.status_code}: {body[:300]}')
             if stream:
-                return None, f'上游错误 {resp.status_code}: {body}'
-            return None, Response(
-                resp.content, status=resp.status_code,
-                content_type=resp.headers.get('Content-Type', 'application/json'),
+                return None, _public_upstream_message(resp.status_code)
+            return None, error_json(
+                _public_upstream_message(resp.status_code),
+                error_type='upstream_error',
+                status=resp.status_code,
             )
         return resp, None
     except requests.RequestException as e:
         logger.error(f'请求上游失败: {e}')
         if stream:
-            return None, str(e)
-        return None, error_json(str(e))
+            return None, '连接上游服务失败'
+        return None, error_json('连接上游服务失败')
+
+
+def _public_upstream_message(status_code: int) -> str:
+    """返回适合直接暴露给客户端的上游错误摘要。"""
+    return f'上游服务返回错误（HTTP {status_code}）'
 
 
 # ─── SSE 流解析 ───────────────────────────────────
