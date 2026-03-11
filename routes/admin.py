@@ -11,6 +11,7 @@ import ipaddress
 import logging
 import os
 import socket
+import subprocess
 from urllib.parse import urlparse
 
 from flask import Blueprint, request, jsonify, send_from_directory
@@ -33,7 +34,27 @@ bp = Blueprint('admin', __name__)
 @bp.route('/admin/')
 def admin_page():
     """返回管理面板首页 HTML 页面，供浏览器进入配置界面。"""
-    return send_from_directory(_STATIC_DIR, 'admin.html')
+    # 获取 git commit hash 作为版本号
+    try:
+        git_hash = subprocess.check_output(
+            ['git', 'rev-parse', '--short', 'HEAD'],
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            stderr=subprocess.DEVNULL
+        ).decode('utf-8').strip()
+    except Exception:
+        # 如果获取失败，使用时间戳
+        import time
+        git_hash = str(int(time.time()))
+
+    # 读取 HTML 文件
+    html_path = os.path.join(_STATIC_DIR, 'admin.html')
+    with open(html_path, 'r', encoding='utf-8') as f:
+        html = f.read()
+
+    # 动态注入版本号
+    html = html.replace('/static/admin.js', f'/static/admin.js?v={git_hash}')
+
+    return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
 
 @bp.route('/static/<path:filename>')
