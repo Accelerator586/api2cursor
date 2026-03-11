@@ -6,7 +6,7 @@
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Generator, Optional
 
 from flask import Blueprint, jsonify, request, send_file
@@ -284,15 +284,19 @@ def _matches_filters(
 
 
 def _parse_datetime(dt_str: str) -> datetime:
-    """解析 ISO 8601 格式的时间字符串。"""
+    """解析 ISO 8601 格式的时间字符串，返回 UTC aware datetime。"""
     try:
         # 支持多种格式
         if 'T' in dt_str:
             # ISO 8601: 2026-03-11T10:30:45Z
-            return datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+            dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
         else:
             # 简单日期: 2026-03-11
-            return datetime.strptime(dt_str, '%Y-%m-%d')
+            # 解析为 naive datetime，然后添加 UTC 时区
+            dt = datetime.strptime(dt_str, '%Y-%m-%d')
+            dt = dt.replace(tzinfo=timezone.utc)
+
+        return dt
     except ValueError:
         raise ValueError(f'无效的时间格式: {dt_str}')
 
