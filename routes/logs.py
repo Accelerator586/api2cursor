@@ -9,8 +9,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Generator, Optional
 
-from flask import Blueprint, jsonify, request, send_file
-from werkzeug.exceptions import BadRequest
+from flask import Blueprint, after_this_request, jsonify, request, send_file
 
 from config import Config
 from extensions import limiter
@@ -132,7 +131,7 @@ def export_logs():
 
         # 生成导出文件
         export_data = {
-            'exported_at': datetime.utcnow().isoformat() + 'Z',
+            'exported_at': datetime.now(timezone.utc).isoformat(),
             'filters': {
                 'model': model_filter or None,
                 'status': status_filter or None,
@@ -150,8 +149,17 @@ def export_logs():
             json.dump(export_data, f, ensure_ascii=False, indent=2)
             temp_path = f.name
 
-        # 发送文件
-        filename = f'logs-export-{datetime.utcnow().strftime("%Y%m%d-%H%M%S")}.json'
+        # 发送文件，请求结束后清理临时文件
+        filename = f'logs-export-{datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")}.json'
+
+        @after_this_request
+        def _cleanup(response):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            return response
+
         return send_file(
             temp_path,
             as_attachment=True,
@@ -371,59 +379,65 @@ def get_log_stats():
         return jsonify({'error': {'message': '获取统计失败', 'type': 'server_error'}}), 500
 
 
-@router.get('/admin/logs/debug')
-def get_logs_debug(request: Request):
-    """Debug endpoint to show what log data exists"""
-    _check_admin_auth(request)
+@bp.route('/api/admin/logs/debug', methods=['GET'])
+@limiter.limit(Config.RATE_LIMIT_ADMIN)
+def get_logs_debug():
+    """Debug endpoint to show what log data exists."""
+    try:
+        start_time = request.args.get('start_time', '').strip()
+        end_time = request.args.get('end_time', '').strip()
 
-    start_time = request.args.get('start_time')
-    end_time = request.args.get('end_time')
-
-    # List available log files
-    log_files = []
-    if LOG_DIR.exists():
-        for f in sorted(LOG_DIR.glob("requests-*.jsonl")):
-            stat = f.stat()
-            log_files.append({
-                "filename": f.name,
-                "size_bytes": stat.st_size,
-                "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
-            })
-
-    # Get sample entries from each file
-    samples = []
-    for f in LOG_DIR.glob("requests-*.jsonl"):
-        try:
-            with open(f, 'r') as file:
-                first_line = file.readline()
-                if first_line:
-                    entry = json.loads(first_line)
-                    samples.append({
-                        "file": f.name,
-                        "timestamp": entry.get("timestamp"),
-                        "id": entry.get("id"),
+        log_files_info = []
+        if os.path.exists(LOGS_DIR):
+            for filename in sorted(os.listdir(LOGS_DIR)):
+                if filename.startswith('requests-') and filename.endswith('.jsonl'):
+                    filepath = os.path.join(LOGS_DIR, filename)
+                    stat = os.stat(filepath)
+                    log_files_info.append({
+                        "filename": filename,
+                        "size_bytes": stat.st_size,
+                        "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
                     })
-        except Exception:
-            pass
 
-    # Parse query times
-    query_range = {}
-    if start_time:
-        query_range["start_time"] = start_time
-        try:
-            query_range["start_time_parsed"] = _parse_datetime(start_time).isoformat()
-        except Exception:
-            query_range["start_time_parsed"] = "invalid"
-    if end_time:
-        query_range["end_time"] = end_time
-        try:
-            query_range["end_time_parsed"] = _parse_datetime(end_time).isoformat()
-        except Exception:
-            query_range["end_time_parsed"] = "invalid"
+        samples = []
+        if os.path.exists(LOGS_DIR):
+            for filename in sorted(os.listdir(LOGS_DIR)):
+                if filename.startswith('requests-') and filename.endswith('.jsonl'):
+                    filepath = os.path.join(LOGS_DIR, filename)
+                    try:
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            first_line = f.readline()
+                            if first_line:
+                                entry = json.loads(first_line)
+                                samples.append({
+                                    "file": filename,
+                                    "timestamp": entry.get("timestamp"),
+                                    "id": entry.get("id"),
+                                })
+                    except Exception:
+                        pass
 
-    return jsonify({
-        "log_files": log_files,
-        "sample_entries": samples,
-        "query_range": query_range,
-        "server_time_utc": datetime.now(timezone.utc).isoformat(),
-    })
+        query_range = {}
+        if start_time:
+            query_range["start_time"] = start_time
+            try:
+                query_range["start_time_parsed"] = _parse_datetime(start_time).isoformat()
+            except Exception:
+                query_range["start_time_parsed"] = "invalid"
+        if end_time:
+            query_range["end_time"] = end_time
+            try:
+                query_range["end_time_parsed"] = _parse_datetime(end_time).isoformat()
+            except Exception:
+                query_range["end_time_parsed"] = "invalid"
+
+        return jsonify({
+            "log_files": log_files_info,
+            "sample_entries": samples,
+            "query_range": query_range,
+            "server_time_utc": datetime.now(timezone.utc).isoformat(),
+        })
+
+    except Exception as e:
+        logger.error(f'获取日志调试信息失败: {e}')
+        return jsonify({'error': {'message': '获取调试信息失败', 'type': 'server_error'}}), 500

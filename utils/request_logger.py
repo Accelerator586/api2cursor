@@ -15,7 +15,7 @@ import os
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from flask import g, request
@@ -67,7 +67,7 @@ class RequestLogger:
         self.start_time = time.time()
         self.data = {
             'id': self.log_id,
-            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'client_ip': self._get_client_ip(),
             'request': {},
             'mapping': {},
@@ -178,7 +178,7 @@ class RequestLogger:
             logger.debug(f'日志目录已确认: {LOGS_DIR}')
 
             # 按日期生成日志文件名
-            date_str = datetime.utcnow().strftime('%Y-%m-%d')
+            date_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
             log_file = os.path.join(LOGS_DIR, f'requests-{date_str}.jsonl')
             logger.debug(f'日志文件路径: {log_file}')
 
@@ -220,7 +220,7 @@ def cleanup_old_logs() -> None:
 
     try:
         retention_days = _config.get('retention_days', 30)
-        cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
 
         if not os.path.exists(LOGS_DIR):
             return
