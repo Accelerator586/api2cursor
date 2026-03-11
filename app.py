@@ -19,7 +19,7 @@ import settings
 from config import Config
 from extensions import limiter
 from routes import register_routes
-from utils.request_logger import cleanup_old_logs
+from utils.request_logger import cleanup_old_logs, is_enabled, LOGS_DIR, get_config
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,11 @@ def create_app():
     limiter.init_app(app)
     settings.load()
     Config.log_security_warnings()
+
+    # 日志功能状态检查
+    logger.info(f'日志功能状态: {"启用" if is_enabled() else "禁用"}')
+    logger.info(f'日志目录: {LOGS_DIR}')
+    logger.info(f'日志配置: {get_config()}')
 
     # 启动日志清理定时任务
     _start_log_cleanup_scheduler()

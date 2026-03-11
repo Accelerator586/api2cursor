@@ -287,7 +287,8 @@ function updateTimeRange() {
     
     const startTime = document.getElementById('filterStartTime');
     if (range === 'today') {
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      // FIX: Use UTC methods to avoid timezone conversion
+      const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
       startTime.value = today.toISOString().slice(0, 16);
     } else if (range === '7days') {
       const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -362,7 +363,23 @@ function renderLogs(data) {
   const el = document.getElementById('logList');
 
   if (!data.logs || data.logs.length === 0) {
-    el.innerHTML = '<div class="empty">暂无日志记录</div>';
+    if (data.total === 0) {
+      // No logs at all
+      el.innerHTML = `
+        <div class="empty">
+          <p>暂无日志数据</p>
+          <p style="font-size: 0.9em; color: var(--text-secondary); margin-top: 8px;">
+            请先向 API 端点发起请求以生成日志：<br>
+            • /v1/chat/completions<br>
+            • /v1/responses<br>
+            • /v1/messages
+          </p>
+        </div>
+      `;
+    } else {
+      // Filtered out
+      el.innerHTML = '<div class="empty">没有符合条件的日志</div>';
+    }
     document.getElementById('logPagination').innerHTML = '';
     return;
   }

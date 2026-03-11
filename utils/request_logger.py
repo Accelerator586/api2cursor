@@ -167,24 +167,29 @@ class RequestLogger:
     def save(self) -> None:
         """将日志写入文件。"""
         if not is_enabled():
+            logger.warning('日志功能已禁用，跳过保存')
             return
 
         try:
+            logger.debug(f'开始保存日志: {self.log_id}')
+
             # 确保日志目录存在
             os.makedirs(LOGS_DIR, exist_ok=True)
+            logger.debug(f'日志目录已确认: {LOGS_DIR}')
 
             # 按日期生成日志文件名
             date_str = datetime.utcnow().strftime('%Y-%m-%d')
             log_file = os.path.join(LOGS_DIR, f'requests-{date_str}.jsonl')
+            logger.debug(f'日志文件路径: {log_file}')
 
             # 线程安全地追加写入
             with _lock:
                 with open(log_file, 'a', encoding='utf-8') as f:
                     f.write(json.dumps(self.data, ensure_ascii=False) + '\n')
 
-            logger.debug(f'日志已保存: {self.log_id}')
+            logger.info(f'日志已保存: {self.log_id} -> {log_file}')
         except Exception as e:
-            logger.error(f'保存日志失败: {e}')
+            logger.error(f'保存日志失败: {e}', exc_info=True)
 
 
 def start_request_logging(model: str, payload: dict[str, Any]) -> Optional[RequestLogger]:
