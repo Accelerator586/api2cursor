@@ -334,15 +334,21 @@ async function loadLogs(page = 1) {
     const search = document.getElementById('filterSearch').value.trim();
     if (search) params.append('search', search);
 
+    console.log('Loading logs with params:', params.toString());
+
     const data = await api('/api/admin/logs?' + params.toString());
+
+    console.log('Logs response:', data);
+
     renderLogs(data);
 
     // 同时更新统计数据
     loadLogStats();
   } catch (e) {
+    console.error('Failed to load logs:', e);
     toast('加载日志失败: ' + e.message, false);
     if (listEl) {
-      listEl.innerHTML = '<div class="empty">加载失败，请重试</div>';
+      listEl.innerHTML = '<div class="empty">加载失败: ' + e.message + '</div>';
       listEl.style.display = 'block';
     }
   } finally {
@@ -573,8 +579,12 @@ async function loadLogStats() {
     const endTime = document.getElementById('filterEndTime').value;
     if (endTime) params.append('end_time', new Date(endTime).toISOString());
 
+    console.log('Loading stats with params:', params.toString());
+
     // 调用统计 API
     const stats = await api('/api/admin/logs/stats?' + params.toString());
+
+    console.log('Stats response:', stats);
 
     // 更新核心指标
     document.getElementById('statTotalRequests').textContent = formatNumber(stats.total_requests);
@@ -584,11 +594,19 @@ async function loadLogStats() {
 
     // 更新模型分布（显示前3个）
     const modelStats = stats.model_stats || {};
+
+    if (Object.keys(modelStats).length === 0) {
+      document.getElementById('statsModelsList').textContent = '暂无数据';
+      return;
+    }
+
     const topModels = Object.entries(modelStats)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3)
       .map(([model, count]) => {
-        const percentage = ((count / stats.total_requests) * 100).toFixed(1);
+        const percentage = stats.total_requests > 0
+          ? ((count / stats.total_requests) * 100).toFixed(1)
+          : '0.0';
         return `${model} (${percentage}%)`;
       })
       .join(' · ');
@@ -596,7 +614,10 @@ async function loadLogStats() {
     document.getElementById('statsModelsList').textContent = topModels || '暂无数据';
 
   } catch (e) {
+    console.error('Failed to load stats:', e);
     toast('加载统计失败: ' + e.message, false);
+    // 显示错误状态
+    document.getElementById('statsModelsList').textContent = '加载失败';
   }
 }
 
