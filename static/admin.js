@@ -256,7 +256,7 @@ async function deleteMapping(name) {
 function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-  
+
   if (tab === 'settings') {
     document.querySelectorAll('.tab')[0].classList.add('active');
     document.getElementById('tabSettings').classList.add('active');
@@ -264,6 +264,7 @@ function switchTab(tab) {
     document.querySelectorAll('.tab')[1].classList.add('active');
     document.getElementById('tabLogs').classList.add('active');
     loadLogs();
+    loadLogStats();
   }
 }
 
@@ -300,49 +301,66 @@ function updateTimeRange() {
 
 async function loadLogs(page = 1) {
   currentPage = page;
-  
+
+  // 显示加载指示器
+  const loadingEl = document.getElementById('logLoading');
+  const listEl = document.getElementById('logList');
+  if (loadingEl) loadingEl.style.display = 'flex';
+  if (listEl) listEl.style.display = 'none';
+
   try {
     const params = new URLSearchParams({
       page: page.toString(),
       limit: currentLimit.toString(),
     });
-    
+
     const model = document.getElementById('filterModel').value.trim();
     if (model) params.append('model', model);
-    
+
     const status = document.getElementById('filterStatus').value;
     if (status) params.append('status', status);
-    
+
     const range = document.getElementById('filterTimeRange').value;
     if (range !== 'custom') {
       updateTimeRange();
     }
-    
+
     const startTime = document.getElementById('filterStartTime').value;
     if (startTime) params.append('start_time', new Date(startTime).toISOString());
-    
+
     const endTime = document.getElementById('filterEndTime').value;
     if (endTime) params.append('end_time', new Date(endTime).toISOString());
-    
+
     const search = document.getElementById('filterSearch').value.trim();
     if (search) params.append('search', search);
-    
+
     const data = await api('/api/admin/logs?' + params.toString());
     renderLogs(data);
+
+    // 同时更新统计数据
+    loadLogStats();
   } catch (e) {
     toast('加载日志失败: ' + e.message, false);
+    if (listEl) {
+      listEl.innerHTML = '<div class="empty">加载失败，请重试</div>';
+      listEl.style.display = 'block';
+    }
+  } finally {
+    // 隐藏加载指示器
+    if (loadingEl) loadingEl.style.display = 'none';
+    if (listEl) listEl.style.display = 'block';
   }
 }
 
 function renderLogs(data) {
   const el = document.getElementById('logList');
-  
+
   if (!data.logs || data.logs.length === 0) {
     el.innerHTML = '<div class="empty">暂无日志记录</div>';
     document.getElementById('logPagination').innerHTML = '';
     return;
   }
-  
+
   el.innerHTML = '<div class="log-table">' +
     '<div class="log-header">' +
       '<div class="log-col-time">时间</div>' +
@@ -350,6 +368,7 @@ function renderLogs(data) {
       '<div class="log-col-model">模型映射</div>' +
       '<div class="log-col-status">状态</div>' +
       '<div class="log-col-duration">耗时</div>' +
+      '<div class="log-col-error">错误信息</div>' +
       '<div class="log-col-actions">操作</div>' +
     '</div>' +
     data.logs.map(log => {
@@ -361,13 +380,13 @@ function renderLogs(data) {
       const statusCode = log.upstream?.status_code || 0;
       const error = log.upstream?.error;
       const duration = log.upstream?.duration_ms || 0;
-      
+
       const isSuccess = statusCode >= 200 && statusCode < 300 && !error;
       const statusClass = isSuccess ? 'status-success' : 'status-error';
       const statusText = isSuccess ? '成功' : '失败';
-      
+
       const durationClass = duration < 500 ? 'duration-fast' : duration < 2000 ? 'duration-medium' : 'duration-slow';
-      
+
       return `<div class="log-row">
         <div class="log-col-time">${esc(time)}</div>
         <div class="log-col-ip">${esc(ip)}</div>
@@ -386,13 +405,16 @@ function renderLogs(data) {
         <div class="log-col-duration">
           <span class="${durationClass}">${duration}ms</span>
         </div>
+        <div class="log-col-error">
+          ${error ? `<span class="error-summary" title="${esc(error)}">${esc(error.substring(0, 50))}${error.length > 50 ? '...' : ''}</span>` : '<span style="color:var(--muted)">-</span>'}
+        </div>
         <div class="log-col-actions">
           <button class="btn btn-ghost btn-sm" onclick='viewLogDetail(${JSON.stringify(log.id)})'>详情</button>
         </div>
       </div>`;
     }).join('') +
     '</div>';
-  
+
   renderPagination(data);
 }
 
@@ -502,29 +524,29 @@ function closeLogDetail() {
 async function exportLogs() {
   try {
     const params = new URLSearchParams();
-    
+
     const model = document.getElementById('filterModel').value.trim();
     if (model) params.append('model', model);
-    
+
     const status = document.getElementById('filterStatus').value;
     if (status) params.append('status', status);
-    
+
     const startTime = document.getElementById('filterStartTime').value;
     if (startTime) params.append('start_time', new Date(startTime).toISOString());
-    
+
     const endTime = document.getElementById('filterEndTime').value;
     if (endTime) params.append('end_time', new Date(endTime).toISOString());
-    
+
     const search = document.getElementById('filterSearch').value.trim();
     if (search) params.append('search', search);
-    
+
     const url = API + '/api/admin/logs/export?' + params.toString();
     const headers = {};
     if (authKey) headers['Authorization'] = 'Bearer ' + authKey;
-    
+
     const res = await fetch(url, { headers });
     if (!res.ok) throw new Error('导出失败: HTTP ' + res.status);
-    
+
     const blob = await res.blob();
     const downloadUrl = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -534,11 +556,54 @@ async function exportLogs() {
     a.click();
     document.body.removeChild(a);
     window.URL.revokeObjectURL(downloadUrl);
-    
+
     toast('日志已导出');
   } catch (e) {
     toast('导出失败: ' + e.message, false);
   }
+}
+
+// ─── 日志统计 ───────────────────────────────────────
+async function loadLogStats() {
+  try {
+    // 获取当前过滤条件
+    const params = new URLSearchParams();
+    const startTime = document.getElementById('filterStartTime').value;
+    if (startTime) params.append('start_time', new Date(startTime).toISOString());
+    const endTime = document.getElementById('filterEndTime').value;
+    if (endTime) params.append('end_time', new Date(endTime).toISOString());
+
+    // 调用统计 API
+    const stats = await api('/api/admin/logs/stats?' + params.toString());
+
+    // 更新核心指标
+    document.getElementById('statTotalRequests').textContent = formatNumber(stats.total_requests);
+    document.getElementById('statSuccessRate').textContent = stats.success_rate.toFixed(2) + '%';
+    document.getElementById('statErrorRate').textContent = (100 - stats.success_rate).toFixed(2) + '%';
+    document.getElementById('statAvgDuration').textContent = stats.avg_duration_ms + 'ms';
+
+    // 更新模型分布（显示前3个）
+    const modelStats = stats.model_stats || {};
+    const topModels = Object.entries(modelStats)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([model, count]) => {
+        const percentage = ((count / stats.total_requests) * 100).toFixed(1);
+        return `${model} (${percentage}%)`;
+      })
+      .join(' · ');
+
+    document.getElementById('statsModelsList').textContent = topModels || '暂无数据';
+
+  } catch (e) {
+    toast('加载统计失败: ' + e.message, false);
+  }
+}
+
+function formatNumber(num) {
+  if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+  if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+  return num.toString();
 }
 
 // ─── 初始化 ─────────────────────────────────────────
