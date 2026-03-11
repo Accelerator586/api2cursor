@@ -369,3 +369,61 @@ def get_log_stats():
     except Exception as e:
         logger.error(f'获取日志统计失败: {e}')
         return jsonify({'error': {'message': '获取统计失败', 'type': 'server_error'}}), 500
+
+
+@router.get('/admin/logs/debug')
+def get_logs_debug(request: Request):
+    """Debug endpoint to show what log data exists"""
+    _check_admin_auth(request)
+
+    start_time = request.args.get('start_time')
+    end_time = request.args.get('end_time')
+
+    # List available log files
+    log_files = []
+    if LOG_DIR.exists():
+        for f in sorted(LOG_DIR.glob("requests-*.jsonl")):
+            stat = f.stat()
+            log_files.append({
+                "filename": f.name,
+                "size_bytes": stat.st_size,
+                "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+            })
+
+    # Get sample entries from each file
+    samples = []
+    for f in LOG_DIR.glob("requests-*.jsonl"):
+        try:
+            with open(f, 'r') as file:
+                first_line = file.readline()
+                if first_line:
+                    entry = json.loads(first_line)
+                    samples.append({
+                        "file": f.name,
+                        "timestamp": entry.get("timestamp"),
+                        "id": entry.get("id"),
+                    })
+        except Exception:
+            pass
+
+    # Parse query times
+    query_range = {}
+    if start_time:
+        query_range["start_time"] = start_time
+        try:
+            query_range["start_time_parsed"] = _parse_datetime(start_time).isoformat()
+        except Exception:
+            query_range["start_time_parsed"] = "invalid"
+    if end_time:
+        query_range["end_time"] = end_time
+        try:
+            query_range["end_time_parsed"] = _parse_datetime(end_time).isoformat()
+        except Exception:
+            query_range["end_time_parsed"] = "invalid"
+
+    return jsonify({
+        "log_files": log_files,
+        "sample_entries": samples,
+        "query_range": query_range,
+        "server_time_utc": datetime.now(timezone.utc).isoformat(),
+    })

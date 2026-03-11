@@ -272,32 +272,64 @@ function switchTab(tab) {
 let currentPage = 1;
 let currentLimit = 50;
 
+// Get user timezone info
+function getUserTimezone() {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const offset = -new Date().getTimezoneOffset() / 60;
+  const offsetStr = offset >= 0 ? `UTC+${offset}` : `UTC${offset}`;
+  return { tz, offset, offsetStr };
+}
+
 function updateTimeRange() {
   const range = document.getElementById('filterTimeRange').value;
   const customRow = document.getElementById('customTimeRow');
-  
+
   if (range === 'custom') {
     customRow.style.display = 'flex';
   } else {
     customRow.style.display = 'none';
-    
+
     const now = new Date();
     const endTime = document.getElementById('filterEndTime');
-    endTime.value = now.toISOString().slice(0, 16);
-    
+    // datetime-local expects local time format
+    endTime.value = formatDatetimeLocal(now);
+
     const startTime = document.getElementById('filterStartTime');
     if (range === 'today') {
-      // FIX: Use UTC methods to avoid timezone conversion
-      const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-      startTime.value = today.toISOString().slice(0, 16);
+      // Start of today in local timezone
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      startTime.value = formatDatetimeLocal(today);
     } else if (range === '7days') {
       const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      startTime.value = sevenDaysAgo.toISOString().slice(0, 16);
+      startTime.value = formatDatetimeLocal(sevenDaysAgo);
     } else if (range === '30days') {
       const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      startTime.value = thirtyDaysAgo.toISOString().slice(0, 16);
+      startTime.value = formatDatetimeLocal(thirtyDaysAgo);
     }
   }
+
+  // Update timezone indicator
+  updateTimezoneIndicator();
+}
+
+// Format date for datetime-local input (YYYY-MM-DDTHH:mm)
+function formatDatetimeLocal(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+// Update timezone indicator in UI
+function updateTimezoneIndicator() {
+  const indicator = document.getElementById('timezoneIndicator');
+  if (!indicator) return;
+
+  const { tz, offsetStr } = getUserTimezone();
+  indicator.textContent = `时区: ${tz} (${offsetStr})`;
+  indicator.title = '所有时间将转换为 UTC 发送到服务器';
 }
 
 async function loadLogs(page = 1) {
@@ -613,7 +645,17 @@ async function loadLogStats() {
     const modelStats = stats.model_stats || {};
 
     if (Object.keys(modelStats).length === 0) {
-      document.getElementById('statsModelsList').textContent = '暂无数据';
+      // Show helpful message when no data
+      const { offsetStr } = getUserTimezone();
+      const startISO = startTime ? new Date(startTime).toISOString() : 'N/A';
+      const endISO = endTime ? new Date(endTime).toISOString() : 'N/A';
+
+      document.getElementById('statsModelsList').innerHTML =
+        `<span style="color:var(--muted)">暂无数据</span><br>` +
+        `<span style="font-size:0.85em;color:var(--text-secondary)">` +
+        `查询范围 (UTC): ${startISO} ~ ${endISO}<br>` +
+        `您的时区: ${offsetStr}<br>` +
+        `提示: 日志以 UTC 时间存储，请确认时间范围是否正确</span>`;
       return;
     }
 

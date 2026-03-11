@@ -233,6 +233,7 @@ def cleanup_old_logs() -> None:
             try:
                 date_str = filename[9:19]  # requests-YYYY-MM-DD.jsonl
                 file_date = datetime.strptime(date_str, '%Y-%m-%d')
+                file_date = file_date.replace(tzinfo=timezone.utc)  # Make timezone-aware
 
                 if file_date < cutoff_date:
                     file_path = os.path.join(LOGS_DIR, filename)
