@@ -18,3 +18,9 @@ data/
 .vscode/
 .idea/
 .cursor/
+
+# AI 工具配置
+.claude/
+
+# Node.js
+node_modules/
