@@ -180,6 +180,8 @@ def _iter_logs(
             filename = os.path.basename(log_file)
             date_str = filename[9:19]  # requests-YYYY-MM-DD.jsonl
             file_date = datetime.strptime(date_str, '%Y-%m-%d')
+            # 添加 UTC 时区信息，使其成为 aware datetime
+            file_date = file_date.replace(tzinfo=timezone.utc)
 
             # 如果文件日期不在范围内，跳过
             if start_dt and file_date < start_dt.replace(hour=0, minute=0, second=0, microsecond=0):
