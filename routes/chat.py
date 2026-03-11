@@ -170,10 +170,10 @@ def _handle_openai_stream(
 ):
     """处理 OpenAI 兼容后端的流式返回。"""
     payload['stream'] = True
+    req_logger = get_request_logger()
 
     def generate():
         """消费上游 OpenAI SSE，并逐段产出给 Cursor 的聊天补全流。"""
-        req_logger = get_request_logger()
         resp, err = forward_request(url, headers, payload, stream=True)
         if err:
             if req_logger:
@@ -274,10 +274,10 @@ def _handle_responses_stream(
     """处理原生 Responses 后端的流式返回。"""
     payload['stream'] = True
     converter = ResponsesToCCStreamConverter(model=ctx.client_model)
+    req_logger = get_request_logger()
 
     def generate():
         """消费上游 Responses 事件，并实时转换成聊天补全 chunk。"""
-        req_logger = get_request_logger()
         resp, err = forward_request(url, headers, payload, stream=True)
         if err:
             if req_logger:
@@ -371,10 +371,10 @@ def _handle_anthropic_stream(
     """
     payload['stream'] = True
     converter = AnthropicStreamConverter()
+    req_logger = get_request_logger()
 
     def generate():
         """消费上游 Anthropic 事件流，并逐步映射为聊天补全 SSE。"""
-        req_logger = get_request_logger()
         resp, err = forward_request(url, headers, payload, stream=True)
         if err:
             if req_logger:

@@ -75,17 +75,15 @@ fi
 echo -e "${GREEN}✓ 配置文件存在${NC}"
 echo ""
 
-# 4. 备份数据（如果存在）
-echo -e "${YELLOW}[4/7] 备份数据...${NC}"
-if [ -d data ]; then
-    BACKUP_DIR="backups/backup_$(date +%Y%m%d_%H%M%S)"
-    mkdir -p "$BACKUP_DIR"
-    cp -r data "$BACKUP_DIR/"
-    echo -e "${GREEN}✓ 数据已备份到 $BACKUP_DIR${NC}"
-else
-    mkdir -p data/logs
-    echo -e "${GREEN}✓ 创建数据目录${NC}"
+# 4. 准备数据目录（修复权限）
+echo -e "${YELLOW}[4/7] 准备数据目录...${NC}"
+mkdir -p data/logs
+# Docker 容器内以 uid 1000 运行，确保 data 目录可写
+if [ "$(stat -c '%u' data 2>/dev/null || stat -f '%u' data 2>/dev/null)" != "1000" ]; then
+    echo "修复 data/ 目录权限（需要 sudo）..."
+    sudo chown -R 1000:1000 data/ 2>/dev/null || chmod -R 777 data/ 2>/dev/null || true
 fi
+echo -e "${GREEN}✓ 数据目录已准备${NC}"
 echo ""
 
 # 5. 停止旧服务

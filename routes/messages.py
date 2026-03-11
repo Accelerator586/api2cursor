@@ -64,7 +64,6 @@ def messages_passthrough():
     # 流式透传
     def generate():
         """建立上游流式连接并逐段回传处理后的 SSE 数据。"""
-        req_logger = get_request_logger()
         try:
             resp = req_lib.post(
                 url, headers=headers, json=payload,

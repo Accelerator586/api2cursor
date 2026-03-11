@@ -23,11 +23,12 @@ COPY static/ static/
 
 RUN addgroup -S appuser \
     && adduser -S -G appuser -u 1000 appuser \
-    && mkdir -p /app/data \
+    && mkdir -p /app/data/logs \
     && chown -R appuser:appuser /app
 
-USER appuser
+COPY entrypoint.sh /app/entrypoint.sh
 
 EXPOSE 3029
 
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["python", "start.py"]
