@@ -45,6 +45,7 @@ from utils.http import (
     iter_responses_sse,
     sse_response,
 )
+from utils.request_logger import get_request_logger, start_request_logging
 from utils.think_tag import ThinkTagExtractor
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,16 @@ def chat_completions():
     client_model = payload.get('model', 'unknown')
     is_stream = payload.get('stream', False)
     ctx = build_route_context(client_model, is_stream)
+
+    # 启动请求日志记录
+    req_logger = start_request_logging(client_model, payload)
+    if req_logger:
+        req_logger.log_mapping(
+            original_model=client_model,
+            upstream_model=ctx.upstream_model,
+            backend=ctx.backend,
+            target_url=ctx.target_url,
+        )
 
     log_route_context('聊天补全', ctx, extra=f'消息数={message_count}')
     _log_messages(payload)
@@ -131,13 +142,23 @@ def _handle_openai_non_stream(
     """处理 OpenAI 兼容后端的非流式返回。"""
     payload['stream'] = False
     resp, err = forward_request(url, headers, payload)
+    
+    req_logger = get_request_logger()
     if err:
+        if req_logger:
+            req_logger.log_upstream_error(500, str(err))
+            req_logger.save()
         return err
 
     raw = resp.json()
     _dbg('上游原始响应=' + json.dumps(raw, ensure_ascii=False, default=str)[:1000])
 
     data = fix_response(raw)
+    
+    if req_logger:
+        req_logger.log_upstream_success(resp.status_code, data)
+        req_logger.save()
+    
     return _finalize_chat_response(ctx, data, debug_label='修复后响应')
 
 
@@ -152,8 +173,12 @@ def _handle_openai_stream(
 
     def generate():
         """消费上游 OpenAI SSE，并逐段产出给 Cursor 的聊天补全流。"""
+        req_logger = get_request_logger()
         resp, err = forward_request(url, headers, payload, stream=True)
         if err:
+            if req_logger:
+                req_logger.log_upstream_error(500, str(err))
+                req_logger.save()
             yield chat_error_chunk(str(err))
             return
 
@@ -163,6 +188,9 @@ def _handle_openai_stream(
         for chunk in iter_openai_sse(resp):
             if chunk is None:
                 _dbg(f'流式响应结束，共 {chunk_count} 个数据片段')
+                if req_logger:
+                    req_logger.log_stream_complete()
+                    req_logger.save()
                 yield sse_data_message('[DONE]')
                 return
 
@@ -217,13 +245,23 @@ def _handle_responses_non_stream(
     """处理原生 Responses 后端的非流式返回。"""
     payload['stream'] = False
     resp, err = forward_request(url, headers, payload)
+    
+    req_logger = get_request_logger()
     if err:
+        if req_logger:
+            req_logger.log_upstream_error(500, str(err))
+            req_logger.save()
         return err
 
     raw = resp.json()
     _dbg('上游原始响应=' + json.dumps(raw, ensure_ascii=False, default=str)[:1000])
 
     data = responses_to_cc_response(raw, ctx.client_model)
+    
+    if req_logger:
+        req_logger.log_upstream_success(resp.status_code, data)
+        req_logger.save()
+    
     return _finalize_chat_response(ctx, data, debug_label='Responses 转回聊天补全后')
 
 
@@ -239,8 +277,12 @@ def _handle_responses_stream(
 
     def generate():
         """消费上游 Responses 事件，并实时转换成聊天补全 chunk。"""
+        req_logger = get_request_logger()
         resp, err = forward_request(url, headers, payload, stream=True)
         if err:
+            if req_logger:
+                req_logger.log_upstream_error(500, str(err))
+                req_logger.save()
             yield chat_error_chunk(str(err))
             return
 
@@ -263,6 +305,9 @@ def _handle_responses_stream(
             event_count += 1
 
         _dbg(f'流式响应结束，共 {event_count} 个事件')
+        if req_logger:
+            req_logger.log_stream_complete()
+            req_logger.save()
         yield sse_data_message('[DONE]')
 
     return sse_response(generate())
@@ -293,13 +338,23 @@ def _handle_anthropic_non_stream(
     """处理 Anthropic 后端的非流式返回。"""
     payload['stream'] = False
     resp, err = forward_request(url, headers, payload)
+    
+    req_logger = get_request_logger()
     if err:
+        if req_logger:
+            req_logger.log_upstream_error(500, str(err))
+            req_logger.save()
         return err
 
     raw = resp.json()
     _dbg('上游原始响应=' + json.dumps(raw, ensure_ascii=False, default=str)[:1000])
 
     data = messages_to_cc_response(raw)
+    
+    if req_logger:
+        req_logger.log_upstream_success(resp.status_code, data)
+        req_logger.save()
+    
     return _finalize_chat_response(ctx, data, debug_label='Messages 转回聊天补全后')
 
 
@@ -319,8 +374,12 @@ def _handle_anthropic_stream(
 
     def generate():
         """消费上游 Anthropic 事件流，并逐步映射为聊天补全 SSE。"""
+        req_logger = get_request_logger()
         resp, err = forward_request(url, headers, payload, stream=True)
         if err:
+            if req_logger:
+                req_logger.log_upstream_error(500, str(err))
+                req_logger.save()
             yield chat_error_chunk(str(err))
             return
 
@@ -347,6 +406,9 @@ def _handle_anthropic_stream(
             event_count += 1
 
         _dbg(f'流式响应结束，共 {event_count} 个事件')
+        if req_logger:
+            req_logger.log_stream_complete()
+            req_logger.save()
         yield sse_data_message('[DONE]')
 
     return sse_response(generate())

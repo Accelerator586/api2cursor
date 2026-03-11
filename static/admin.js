@@ -68,6 +68,14 @@ async function loadDashboard() {
     document.getElementById('proxyKey').value = s.proxy_api_key || '';
     document.getElementById('envUrl').textContent = s.env_target_url ? '环境变量: ' + s.env_target_url : '';
     document.getElementById('envKey').textContent = s.env_api_key ? '环境变量: (已配置)' : '环境变量: (未设置)';
+    
+    // 加载日志配置
+    const logging = s.logging || {};
+    document.getElementById('logEnabled').checked = logging.enabled !== false;
+    document.getElementById('logRetentionDays').value = logging.retention_days || 30;
+    document.getElementById('logRequestBody').checked = logging.log_request_body !== false;
+    document.getElementById('logResponseBody').checked = logging.log_response_body !== false;
+    
     await loadMappings();
     checkHealth();
   } catch (e) {
@@ -102,6 +110,12 @@ async function saveSettings() {
       body: JSON.stringify({
         proxy_target_url: document.getElementById('targetUrl').value.trim(),
         proxy_api_key: document.getElementById('proxyKey').value.trim(),
+        logging: {
+          enabled: document.getElementById('logEnabled').checked,
+          retention_days: parseInt(document.getElementById('logRetentionDays').value) || 30,
+          log_request_body: document.getElementById('logRequestBody').checked,
+          log_response_body: document.getElementById('logResponseBody').checked,
+        },
       }),
     });
     toast('设置已保存');
@@ -238,6 +252,295 @@ async function deleteMapping(name) {
   }
 }
 
+// ─── 标签页切换 ─────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  
+  if (tab === 'settings') {
+    document.querySelectorAll('.tab')[0].classList.add('active');
+    document.getElementById('tabSettings').classList.add('active');
+  } else if (tab === 'logs') {
+    document.querySelectorAll('.tab')[1].classList.add('active');
+    document.getElementById('tabLogs').classList.add('active');
+    loadLogs();
+  }
+}
+
+// ─── 日志管理 ───────────────────────────────────────
+let currentPage = 1;
+let currentLimit = 50;
+
+function updateTimeRange() {
+  const range = document.getElementById('filterTimeRange').value;
+  const customRow = document.getElementById('customTimeRow');
+  
+  if (range === 'custom') {
+    customRow.style.display = 'flex';
+  } else {
+    customRow.style.display = 'none';
+    
+    const now = new Date();
+    const endTime = document.getElementById('filterEndTime');
+    endTime.value = now.toISOString().slice(0, 16);
+    
+    const startTime = document.getElementById('filterStartTime');
+    if (range === 'today') {
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      startTime.value = today.toISOString().slice(0, 16);
+    } else if (range === '7days') {
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      startTime.value = sevenDaysAgo.toISOString().slice(0, 16);
+    } else if (range === '30days') {
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      startTime.value = thirtyDaysAgo.toISOString().slice(0, 16);
+    }
+  }
+}
+
+async function loadLogs(page = 1) {
+  currentPage = page;
+  
+  try {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      limit: currentLimit.toString(),
+    });
+    
+    const model = document.getElementById('filterModel').value.trim();
+    if (model) params.append('model', model);
+    
+    const status = document.getElementById('filterStatus').value;
+    if (status) params.append('status', status);
+    
+    const range = document.getElementById('filterTimeRange').value;
+    if (range !== 'custom') {
+      updateTimeRange();
+    }
+    
+    const startTime = document.getElementById('filterStartTime').value;
+    if (startTime) params.append('start_time', new Date(startTime).toISOString());
+    
+    const endTime = document.getElementById('filterEndTime').value;
+    if (endTime) params.append('end_time', new Date(endTime).toISOString());
+    
+    const search = document.getElementById('filterSearch').value.trim();
+    if (search) params.append('search', search);
+    
+    const data = await api('/api/admin/logs?' + params.toString());
+    renderLogs(data);
+  } catch (e) {
+    toast('加载日志失败: ' + e.message, false);
+  }
+}
+
+function renderLogs(data) {
+  const el = document.getElementById('logList');
+  
+  if (!data.logs || data.logs.length === 0) {
+    el.innerHTML = '<div class="empty">暂无日志记录</div>';
+    document.getElementById('logPagination').innerHTML = '';
+    return;
+  }
+  
+  el.innerHTML = '<div class="log-table">' +
+    '<div class="log-header">' +
+      '<div class="log-col-time">时间</div>' +
+      '<div class="log-col-ip">客户端IP</div>' +
+      '<div class="log-col-model">模型映射</div>' +
+      '<div class="log-col-status">状态</div>' +
+      '<div class="log-col-duration">耗时</div>' +
+      '<div class="log-col-actions">操作</div>' +
+    '</div>' +
+    data.logs.map(log => {
+      const time = new Date(log.timestamp).toLocaleString('zh-CN');
+      const ip = log.client_ip || 'unknown';
+      const originalModel = log.request?.model || 'unknown';
+      const upstreamModel = log.mapping?.upstream_model || originalModel;
+      const backend = log.mapping?.backend || 'auto';
+      const statusCode = log.upstream?.status_code || 0;
+      const error = log.upstream?.error;
+      const duration = log.upstream?.duration_ms || 0;
+      
+      const isSuccess = statusCode >= 200 && statusCode < 300 && !error;
+      const statusClass = isSuccess ? 'status-success' : 'status-error';
+      const statusText = isSuccess ? '成功' : '失败';
+      
+      const durationClass = duration < 500 ? 'duration-fast' : duration < 2000 ? 'duration-medium' : 'duration-slow';
+      
+      return `<div class="log-row">
+        <div class="log-col-time">${esc(time)}</div>
+        <div class="log-col-ip">${esc(ip)}</div>
+        <div class="log-col-model">
+          <div class="model-mapping">
+            <span class="model-original">${esc(originalModel)}</span>
+            <span class="model-arrow">→</span>
+            <span class="model-upstream">${esc(upstreamModel)}</span>
+            <span class="tag tag-${backend}">${backend}</span>
+          </div>
+        </div>
+        <div class="log-col-status">
+          <span class="status-badge ${statusClass}">${statusText}</span>
+          ${statusCode ? `<span class="status-code">${statusCode}</span>` : ''}
+        </div>
+        <div class="log-col-duration">
+          <span class="${durationClass}">${duration}ms</span>
+        </div>
+        <div class="log-col-actions">
+          <button class="btn btn-ghost btn-sm" onclick='viewLogDetail(${JSON.stringify(log.id)})'>详情</button>
+        </div>
+      </div>`;
+    }).join('') +
+    '</div>';
+  
+  renderPagination(data);
+}
+
+function renderPagination(data) {
+  const el = document.getElementById('logPagination');
+  
+  if (data.pages <= 1) {
+    el.innerHTML = '';
+    return;
+  }
+  
+  let html = '<div class="pagination-info">共 ' + data.total + ' 条，第 ' + data.page + '/' + data.pages + ' 页</div>';
+  html += '<div class="pagination-buttons">';
+  
+  if (data.page > 1) {
+    html += '<button class="btn btn-ghost btn-sm" onclick="loadLogs(' + (data.page - 1) + ')">上一页</button>';
+  }
+  
+  if (data.page < data.pages) {
+    html += '<button class="btn btn-ghost btn-sm" onclick="loadLogs(' + (data.page + 1) + ')">下一页</button>';
+  }
+  
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+async function viewLogDetail(logId) {
+  try {
+    const log = await api('/api/admin/logs/' + encodeURIComponent(logId));
+    
+    const time = new Date(log.timestamp).toLocaleString('zh-CN');
+    const statusCode = log.upstream?.status_code || 0;
+    const error = log.upstream?.error;
+    const isSuccess = statusCode >= 200 && statusCode < 300 && !error;
+    
+    let html = '<div class="log-detail">';
+    
+    // 基本信息
+    html += '<div class="detail-section">';
+    html += '<h4>基本信息</h4>';
+    html += '<div class="detail-grid">';
+    html += '<div class="detail-item"><label>日志ID:</label><span>' + esc(log.id) + '</span></div>';
+    html += '<div class="detail-item"><label>时间:</label><span>' + esc(time) + '</span></div>';
+    html += '<div class="detail-item"><label>客户端IP:</label><span>' + esc(log.client_ip) + '</span></div>';
+    html += '</div></div>';
+    
+    // 请求信息
+    html += '<div class="detail-section">';
+    html += '<h4>请求信息</h4>';
+    html += '<div class="detail-grid">';
+    html += '<div class="detail-item"><label>模型:</label><span>' + esc(log.request?.model || 'unknown') + '</span></div>';
+    html += '<div class="detail-item"><label>流式:</label><span>' + (log.request?.stream ? '是' : '否') + '</span></div>';
+    if (log.request?.messages) {
+      html += '<div class="detail-item full-width"><label>消息数:</label><span>' + log.request.messages.length + '</span></div>';
+      html += '<div class="detail-item full-width"><label>消息内容:</label><pre>' + esc(JSON.stringify(log.request.messages, null, 2)) + '</pre></div>';
+    }
+    html += '</div></div>';
+    
+    // 模型映射
+    html += '<div class="detail-section">';
+    html += '<h4>模型映射</h4>';
+    html += '<div class="detail-grid">';
+    html += '<div class="detail-item"><label>原始模型:</label><span>' + esc(log.mapping?.original_model || '') + '</span></div>';
+    html += '<div class="detail-item"><label>上游模型:</label><span>' + esc(log.mapping?.upstream_model || '') + '</span></div>';
+    html += '<div class="detail-item"><label>后端类型:</label><span>' + esc(log.mapping?.backend || '') + '</span></div>';
+    html += '<div class="detail-item"><label>目标地址:</label><span>' + esc(log.mapping?.target_url || '') + '</span></div>';
+    html += '</div></div>';
+    
+    // 上游响应
+    html += '<div class="detail-section">';
+    html += '<h4>上游响应</h4>';
+    html += '<div class="detail-grid">';
+    html += '<div class="detail-item"><label>状态码:</label><span class="' + (isSuccess ? 'status-success' : 'status-error') + '">' + statusCode + '</span></div>';
+    html += '<div class="detail-item"><label>耗时:</label><span>' + (log.upstream?.duration_ms || 0) + 'ms</span></div>';
+    if (error) {
+      html += '<div class="detail-item full-width"><label>错误:</label><pre class="error-text">' + esc(error) + '</pre></div>';
+    }
+    if (log.upstream?.response && !error) {
+      html += '<div class="detail-item full-width"><label>响应内容:</label><pre>' + esc(JSON.stringify(log.upstream.response, null, 2)) + '</pre></div>';
+    }
+    html += '</div></div>';
+    
+    // Token 使用
+    if (log.tokens && (log.tokens.prompt || log.tokens.completion)) {
+      html += '<div class="detail-section">';
+      html += '<h4>Token 使用</h4>';
+      html += '<div class="detail-grid">';
+      html += '<div class="detail-item"><label>输入:</label><span>' + (log.tokens.prompt || 0) + '</span></div>';
+      html += '<div class="detail-item"><label>输出:</label><span>' + (log.tokens.completion || 0) + '</span></div>';
+      html += '<div class="detail-item"><label>总计:</label><span>' + (log.tokens.total || 0) + '</span></div>';
+      html += '</div></div>';
+    }
+    
+    html += '</div>';
+    
+    document.getElementById('logDetailContent').innerHTML = html;
+    document.getElementById('logDetailModal').classList.add('active');
+  } catch (e) {
+    toast('加载日志详情失败: ' + e.message, false);
+  }
+}
+
+function closeLogDetail() {
+  document.getElementById('logDetailModal').classList.remove('active');
+}
+
+async function exportLogs() {
+  try {
+    const params = new URLSearchParams();
+    
+    const model = document.getElementById('filterModel').value.trim();
+    if (model) params.append('model', model);
+    
+    const status = document.getElementById('filterStatus').value;
+    if (status) params.append('status', status);
+    
+    const startTime = document.getElementById('filterStartTime').value;
+    if (startTime) params.append('start_time', new Date(startTime).toISOString());
+    
+    const endTime = document.getElementById('filterEndTime').value;
+    if (endTime) params.append('end_time', new Date(endTime).toISOString());
+    
+    const search = document.getElementById('filterSearch').value.trim();
+    if (search) params.append('search', search);
+    
+    const url = API + '/api/admin/logs/export?' + params.toString();
+    const headers = {};
+    if (authKey) headers['Authorization'] = 'Bearer ' + authKey;
+    
+    const res = await fetch(url, { headers });
+    if (!res.ok) throw new Error('导出失败: HTTP ' + res.status);
+    
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = 'logs-export-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(downloadUrl);
+    
+    toast('日志已导出');
+  } catch (e) {
+    toast('导出失败: ' + e.message, false);
+  }
+}
+
 // ─── 初始化 ─────────────────────────────────────────
 (function init() {
   const saved = sessionStorage.getItem('_ak');
@@ -247,11 +550,20 @@ async function deleteMapping(name) {
     document.getElementById('dashboard').style.display = 'block';
     loadDashboard();
   }
+  
+  // 初始化时间范围
+  updateTimeRange();
 })();
 
 document.getElementById('modal').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
+document.getElementById('logDetailModal').addEventListener('click', function(e) {
+  if (e.target === this) closeLogDetail();
+});
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') closeModal();
+  if (e.key === 'Escape') {
+    closeModal();
+    closeLogDetail();
+  }
 });

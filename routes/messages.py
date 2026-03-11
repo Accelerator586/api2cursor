@@ -15,6 +15,7 @@ import settings
 from config import Config
 from extensions import limiter
 from utils.http import build_anthropic_headers, forward_request, sse_response
+from utils.request_logger import get_request_logger, start_request_logging
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,17 @@ def messages_passthrough():
 
     logger.info(f'[透传] model={model} 流式={is_stream}')
 
+    # 启动请求日志记录
     url_base = settings.get_url()
+    req_logger = start_request_logging(model, payload)
+    if req_logger:
+        req_logger.log_mapping(
+            original_model=model,
+            upstream_model=model,
+            backend='anthropic',
+            target_url=url_base,
+        )
+
     api_key = settings.get_key()
     headers = build_anthropic_headers(api_key)
     url = f'{url_base.rstrip("/")}/v1/messages'
@@ -39,14 +50,21 @@ def messages_passthrough():
     if not is_stream:
         resp, err = forward_request(url, headers, payload)
         if err:
+            if req_logger:
+                req_logger.log_upstream_error(500, str(err))
+                req_logger.save()
             return err
         data = resp.json()
         _inject_thinking(data)
+        if req_logger:
+            req_logger.log_upstream_success(resp.status_code, data)
+            req_logger.save()
         return jsonify(data)
 
     # 流式透传
     def generate():
         """建立上游流式连接并逐段回传处理后的 SSE 数据。"""
+        req_logger = get_request_logger()
         try:
             resp = req_lib.post(
                 url, headers=headers, json=payload,
@@ -55,6 +73,9 @@ def messages_passthrough():
             if resp.status_code != 200:
                 body = resp.content.decode('utf-8', errors='replace')
                 logger.warning(f'上游返回 {resp.status_code}: {body[:300]}')
+                if req_logger:
+                    req_logger.log_upstream_error(resp.status_code, body[:300])
+                    req_logger.save()
                 yield (
                     'data: '
                     + json.dumps({
@@ -68,8 +89,14 @@ def messages_passthrough():
                 return
 
             yield from _process_stream(resp)
+            if req_logger:
+                req_logger.log_stream_complete()
+                req_logger.save()
         except req_lib.RequestException as e:
             logger.error(f'请求上游失败: {e}')
+            if req_logger:
+                req_logger.log_upstream_error(500, str(e))
+                req_logger.save()
             yield (
                 'data: '
                 + json.dumps({

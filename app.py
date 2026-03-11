@@ -4,10 +4,12 @@
   - 注册所有路由蓝图
   - 设置 JSON 错误处理器（避免返回 HTML）
   - 配置全局鉴权中间件
+  - 启动日志清理定时任务
 """
 
 import hmac
 import logging
+import threading
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -17,6 +19,7 @@ import settings
 from config import Config
 from extensions import limiter
 from routes import register_routes
+from utils.request_logger import cleanup_old_logs
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,9 @@ def create_app():
     limiter.init_app(app)
     settings.load()
     Config.log_security_warnings()
+
+    # 启动日志清理定时任务
+    _start_log_cleanup_scheduler()
 
     # ─── JSON 错误处理器 ──────────────────────────
 
@@ -101,3 +107,20 @@ def create_app():
     register_routes(app)
 
     return app
+
+
+def _start_log_cleanup_scheduler():
+    """启动后台线程定期清理过期日志。"""
+    def cleanup_task():
+        import time
+        while True:
+            try:
+                cleanup_old_logs()
+            except Exception as e:
+                logger.error(f'日志清理任务失败: {e}')
+            # 每天清理一次
+            time.sleep(24 * 60 * 60)
+
+    thread = threading.Thread(target=cleanup_task, daemon=True, name='LogCleanup')
+    thread.start()
+    logger.info('日志清理定时任务已启动')

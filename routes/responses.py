@@ -34,6 +34,7 @@ from utils.http import (
     iter_responses_sse,
     sse_response,
 )
+from utils.request_logger import get_request_logger, start_request_logging
 from utils.think_tag import ThinkTagExtractor
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,17 @@ def responses_endpoint():
     is_stream = payload.get('stream', False)
 
     ctx = build_route_context(client_model, is_stream)
+    
+    # 启动请求日志记录
+    req_logger = start_request_logging(client_model, payload)
+    if req_logger:
+        req_logger.log_mapping(
+            original_model=client_model,
+            upstream_model=ctx.upstream_model,
+            backend=ctx.backend,
+            target_url=ctx.target_url,
+        )
+    
     log_route_context('响应生成', ctx)
 
     cc_payload = _build_cc_payload(payload, ctx)
@@ -106,7 +118,12 @@ def _handle_openai_non_stream(
     """处理 OpenAI 兼容后端的非流式 Responses 返回。"""
     cc_payload['stream'] = False
     resp, err = forward_request(url, headers, cc_payload)
+    
+    req_logger = get_request_logger()
     if err:
+        if req_logger:
+            req_logger.log_upstream_error(500, str(err))
+            req_logger.save()
         return err
 
     raw = resp.json()
@@ -114,6 +131,11 @@ def _handle_openai_non_stream(
 
     fixed = fix_response(raw)
     response_data = cc_to_responses(fixed, ctx.client_model)
+    
+    if req_logger:
+        req_logger.log_upstream_success(resp.status_code, response_data)
+        req_logger.save()
+    
     return _finalize_responses_response(response_data, debug_label='转换为 Responses 后')
 
 
@@ -129,10 +151,14 @@ def _handle_openai_stream(
 
     def generate():
         """消费 OpenAI 聊天补全流，并实时改写为 Responses SSE。"""
+        req_logger = get_request_logger()
         yield from converter.start_events()
 
         resp, err = forward_request(url, headers, cc_payload, stream=True)
         if err:
+            if req_logger:
+                req_logger.log_upstream_error(500, str(err))
+                req_logger.save()
             yield responses_error_event(str(err))
             return
 
@@ -142,6 +168,9 @@ def _handle_openai_stream(
         for chunk in iter_openai_sse(resp):
             if chunk is None:
                 _dbg(f'流式响应结束，共 {chunk_count} 个数据片段')
+                if req_logger:
+                    req_logger.log_stream_complete()
+                    req_logger.save()
                 yield from converter.finalize()
                 return
 
@@ -189,11 +218,21 @@ def _handle_responses_non_stream(
     """处理原生 Responses 后端的非流式返回。"""
     payload['stream'] = False
     resp, err = forward_request(url, headers, payload)
+    
+    req_logger = get_request_logger()
     if err:
+        if req_logger:
+            req_logger.log_upstream_error(500, str(err))
+            req_logger.save()
         return err
 
     response_data = resp.json()
     response_data['model'] = ctx.client_model
+    
+    if req_logger:
+        req_logger.log_upstream_success(resp.status_code, response_data)
+        req_logger.save()
+    
     return _finalize_responses_response(response_data, debug_label='原生 Responses 返回后')
 
 
@@ -209,8 +248,12 @@ def _handle_responses_stream(
 
     def generate():
         """透传上游原生 Responses 流，并做轻量模型名改写。"""
+        req_logger = get_request_logger()
         resp, err = forward_request(url, headers, payload, stream=True)
         if err:
+            if req_logger:
+                req_logger.log_upstream_error(500, str(err))
+                req_logger.save()
             yield responses_error_event(str(err))
             return
 
@@ -225,6 +268,9 @@ def _handle_responses_stream(
             event_count += 1
 
         _dbg(f'流式响应结束，共 {event_count} 个事件')
+        if req_logger:
+            req_logger.log_stream_complete()
+            req_logger.save()
 
     return sse_response(generate())
 
@@ -253,7 +299,12 @@ def _handle_anthropic_non_stream(
     """处理 Anthropic 后端的非流式 Responses 返回。"""
     anthropic_payload['stream'] = False
     resp, err = forward_request(url, headers, anthropic_payload)
+    
+    req_logger = get_request_logger()
     if err:
+        if req_logger:
+            req_logger.log_upstream_error(500, str(err))
+            req_logger.save()
         return err
 
     raw = resp.json()
@@ -261,6 +312,11 @@ def _handle_anthropic_non_stream(
 
     cc_data = messages_to_cc_response(raw)
     response_data = cc_to_responses(cc_data, ctx.client_model)
+    
+    if req_logger:
+        req_logger.log_upstream_success(resp.status_code, response_data)
+        req_logger.save()
+    
     return _finalize_responses_response(response_data, debug_label='Messages 转回 Responses 后')
 
 
@@ -280,10 +336,14 @@ def _handle_anthropic_stream(
 
     def generate():
         """消费 Anthropic SSE，并直接映射为 Responses 事件序列。"""
+        req_logger = get_request_logger()
         yield from converter.start_events()
 
         resp, err = forward_request(url, headers, anthropic_payload, stream=True)
         if err:
+            if req_logger:
+                req_logger.log_upstream_error(500, str(err))
+                req_logger.save()
             yield responses_error_event(str(err))
             return
 
@@ -299,6 +359,9 @@ def _handle_anthropic_stream(
             event_count += 1
 
         _dbg(f'流式响应结束，共 {event_count} 个事件')
+        if req_logger:
+            req_logger.log_stream_complete()
+            req_logger.save()
         yield from converter.finalize()
 
     return sse_response(generate())

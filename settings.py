@@ -23,6 +23,13 @@ _DEFAULTS = {
     'proxy_target_url': '',
     'proxy_api_key': '',
     'model_mappings': {},
+    'logging': {
+        'enabled': True,
+        'retention_days': 30,
+        'max_file_size_mb': 100,
+        'log_request_body': True,
+        'log_response_body': True,
+    },
 }
 
 
@@ -36,11 +43,19 @@ def load():
         if os.path.exists(SETTINGS_FILE):
             try:
                 with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
-                    _cache = {**_DEFAULTS, **json.load(f)}
+                    loaded = json.load(f)
+                    # 深度合并 logging 配置
+                    _cache = {**_DEFAULTS}
+                    _cache.update(loaded)
+                    if 'logging' in loaded:
+                        _cache['logging'] = {**_DEFAULTS['logging'], **loaded['logging']}
             except (json.JSONDecodeError, OSError):
                 _cache = dict(_DEFAULTS)
         else:
             _cache = dict(_DEFAULTS)
+    
+    # 同步日志配置到日志模块
+    _sync_logging_config()
     return dict(_cache)
 
 
@@ -53,8 +68,14 @@ def save(data):
     with _lock:
         os.makedirs(DATA_DIR, exist_ok=True)
         _cache = {**_DEFAULTS, **data}
+        # 深度合并 logging 配置
+        if 'logging' in data:
+            _cache['logging'] = {**_DEFAULTS['logging'], **data['logging']}
         with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
             json.dump(_cache, f, ensure_ascii=False, indent=2)
+    
+    # 同步日志配置到日志模块
+    _sync_logging_config()
 
 
 def get():
@@ -108,3 +129,13 @@ def _auto_detect(name):
     """
     lower = (name or '').lower()
     return 'anthropic' if ('claude' in lower or 'anthropic' in lower) else 'openai'
+
+
+def _sync_logging_config():
+    """同步日志配置到日志模块。"""
+    try:
+        from utils import request_logger
+        logging_config = get().get('logging', {})
+        request_logger.set_config(logging_config)
+    except ImportError:
+        pass  # 日志模块可能还未加载

@@ -36,7 +36,14 @@
     </div>
   </header>
 
+  <nav class="tabs container">
+    <button class="tab active" onclick="switchTab('settings')">设置</button>
+    <button class="tab" onclick="switchTab('logs')">日志</button>
+  </nav>
+
   <main class="container">
+    <!-- 设置标签页 -->
+    <div id="tabSettings" class="tab-content active">
     <!-- 全局设置 -->
     <div class="card">
       <div class="card-header">
@@ -58,6 +65,40 @@
       <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
     </div>
 
+    <!-- 日志配置 -->
+    <div class="card">
+      <div class="card-header">
+        <h2>日志配置</h2>
+      </div>
+      <div class="field">
+        <label>
+          <input type="checkbox" id="logEnabled" checked>
+          启用请求日志记录
+        </label>
+        <div class="hint">记录所有 API 请求的详细信息，用于调试和监控</div>
+      </div>
+      <div class="field">
+        <label>日志保留天数</label>
+        <div class="input-wrap"><input type="number" id="logRetentionDays" value="30" min="1" max="365"></div>
+        <div class="hint">超过此天数的日志文件将被自动删除</div>
+      </div>
+      <div class="field">
+        <label>
+          <input type="checkbox" id="logRequestBody" checked>
+          记录请求内容
+        </label>
+        <div class="hint">记录完整的 messages 和请求参数（关闭后仅记录元数据）</div>
+      </div>
+      <div class="field">
+        <label>
+          <input type="checkbox" id="logResponseBody" checked>
+          记录响应内容
+        </label>
+        <div class="hint">记录完整的响应数据和 token 使用情况</div>
+      </div>
+      <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
+    </div>
+
     <!-- 模型映射 -->
     <div class="card">
       <div class="card-header">
@@ -70,10 +111,73 @@
       </div>
       <div id="mappingList"></div>
     </div>
+    </div>
+
+    <!-- 日志标签页 -->
+    <div id="tabLogs" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <h2>请求日志</h2>
+          <button class="btn btn-green btn-sm" onclick="exportLogs()">导出日志</button>
+        </div>
+        
+        <!-- 过滤器 -->
+        <div class="log-filters">
+          <div class="filter-row">
+            <div class="field">
+              <label>模型名</label>
+              <input type="text" id="filterModel" placeholder="模糊搜索模型名" onkeydown="if(event.key==='Enter')loadLogs()">
+            </div>
+            <div class="field">
+              <label>状态</label>
+              <select id="filterStatus">
+                <option value="">全部</option>
+                <option value="success">成功</option>
+                <option value="error">失败</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>时间范围</label>
+              <select id="filterTimeRange" onchange="updateTimeRange()">
+                <option value="today">今天</option>
+                <option value="7days">最近7天</option>
+                <option value="30days">最近30天</option>
+                <option value="custom">自定义</option>
+              </select>
+            </div>
+          </div>
+          <div class="filter-row" id="customTimeRow" style="display:none">
+            <div class="field">
+              <label>开始时间</label>
+              <input type="datetime-local" id="filterStartTime">
+            </div>
+            <div class="field">
+              <label>结束时间</label>
+              <input type="datetime-local" id="filterEndTime">
+            </div>
+          </div>
+          <div class="filter-row">
+            <div class="field" style="flex:1">
+              <label>关键词搜索</label>
+              <input type="text" id="filterSearch" placeholder="搜索消息内容或错误信息" onkeydown="if(event.key==='Enter')loadLogs()">
+            </div>
+            <div class="field" style="align-self:flex-end">
+              <button class="btn btn-primary" onclick="loadLogs()">查询</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 日志列表 -->
+        <div id="logList"></div>
+
+        <!-- 分页 -->
+        <div id="logPagination" class="pagination"></div>
+      </div>
+    </div>
   </main>
 </div>
 
-<!-- 弹窗 -->
+<!-- 模型映射弹窗 -->
 <div class="modal-overlay" id="modal">
   <div class="modal">
     <h3 id="modalTitle">添加模型映射</h3>
@@ -118,6 +222,17 @@
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">取消</button>
       <button class="btn btn-primary" id="modalSaveBtn" onclick="saveMapping()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 日志详情弹窗 -->
+<div class="modal-overlay" id="logDetailModal">
+  <div class="modal modal-large">
+    <h3>日志详情</h3>
+    <div id="logDetailContent"></div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="closeLogDetail()">关闭</button>
     </div>
   </div>
 </div>

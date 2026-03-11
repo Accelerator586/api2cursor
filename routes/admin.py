@@ -97,6 +97,7 @@ def get_settings():
         'proxy_api_key': s.get('proxy_api_key', ''),
         'env_target_url': Config.PROXY_TARGET_URL,
         'env_api_key': '***' if Config.PROXY_API_KEY else '',
+        'logging': s.get('logging', {}),
     })
 
 
@@ -116,6 +117,15 @@ def update_settings():
             return jsonify({'error': {'message': str(exc), 'type': 'validation_error'}}), 400
     if 'proxy_api_key' in data:
         s['proxy_api_key'] = data.get('proxy_api_key', '') or ''
+    if 'logging' in data:
+        logging_config = data.get('logging', {})
+        s['logging'] = {
+            'enabled': bool(logging_config.get('enabled', True)),
+            'retention_days': int(logging_config.get('retention_days', 30)),
+            'max_file_size_mb': int(logging_config.get('max_file_size_mb', 100)),
+            'log_request_body': bool(logging_config.get('log_request_body', True)),
+            'log_response_body': bool(logging_config.get('log_response_body', True)),
+        }
     return _save_and_respond(s, '全局设置已更新')
 
 
