@@ -250,33 +250,33 @@ def _matches_filters(
         if status_filter == 'error' and (200 <= status_code < 300 and not error):
             return False
 
-    # 关键词搜索（搜索 messages 内容）
+    # 增强的全文搜索（搜索更多字段）
     if search_query:
         search_lower = search_query.lower()
-        messages = log_entry.get('request', {}).get('messages', [])
-
+        
+        # 构建可搜索字段列表
+        searchable_fields = [
+            log_entry.get('client_ip', ''),
+            log_entry.get('request', {}).get('model', ''),
+            log_entry.get('mapping', {}).get('upstream_model', ''),
+            log_entry.get('mapping', {}).get('backend', ''),
+            log_entry.get('upstream', {}).get('error', ''),
+        ]
+        
         # 搜索消息内容
-        found = False
+        messages = log_entry.get('request', {}).get('messages', [])
         for msg in messages:
             content = msg.get('content', '')
-            if isinstance(content, str) and search_lower in content.lower():
-                found = True
-                break
+            if isinstance(content, str):
+                searchable_fields.append(content)
             elif isinstance(content, list):
                 for item in content:
                     if isinstance(item, dict):
-                        text = item.get('text', '')
-                        if search_lower in text.lower():
-                            found = True
-                            break
-                if found:
-                    break
-
-        # 也搜索错误信息
-        error_msg = log_entry.get('upstream', {}).get('error', '')
-        if isinstance(error_msg, str) and search_lower in error_msg.lower():
-            found = True
-
+                        searchable_fields.append(item.get('text', ''))
+        
+        # 检查是否在任何字段中找到搜索词
+        found = any(search_lower in str(field).lower() for field in searchable_fields)
+        
         if not found:
             return False
 
@@ -295,3 +295,71 @@ def _parse_datetime(dt_str: str) -> datetime:
             return datetime.strptime(dt_str, '%Y-%m-%d')
     except ValueError:
         raise ValueError(f'无效的时间格式: {dt_str}')
+
+
+@bp.route('/api/admin/logs/stats', methods=['GET'])
+@limiter.limit(Config.RATE_LIMIT_ADMIN)
+def get_log_stats():
+    """获取日志统计信息。"""
+    try:
+        # 解析时间范围参数
+        start_time = request.args.get('start_time', '').strip()
+        end_time = request.args.get('end_time', '').strip()
+        
+        start_dt = _parse_datetime(start_time) if start_time else None
+        end_dt = _parse_datetime(end_time) if end_time else None
+        
+        # 统计数据
+        total_requests = 0
+        success_count = 0
+        error_count = 0
+        total_duration = 0
+        duration_count = 0
+        model_stats = {}
+        backend_stats = {}
+        
+        for log_entry in _iter_logs(start_dt, end_dt):
+            total_requests += 1
+            
+            # 统计成功/失败
+            status_code = log_entry.get('upstream', {}).get('status_code', 0)
+            error = log_entry.get('upstream', {}).get('error')
+            
+            if 200 <= status_code < 300 and not error:
+                success_count += 1
+            else:
+                error_count += 1
+            
+            # 统计耗时
+            duration = log_entry.get('upstream', {}).get('duration_ms', 0)
+            if duration > 0:
+                total_duration += duration
+                duration_count += 1
+            
+            # 统计模型使用
+            model = log_entry.get('request', {}).get('model', 'unknown')
+            model_stats[model] = model_stats.get(model, 0) + 1
+            
+            # 统计后端类型
+            backend = log_entry.get('mapping', {}).get('backend', 'unknown')
+            backend_stats[backend] = backend_stats.get(backend, 0) + 1
+        
+        # 计算平均耗时
+        avg_duration = int(total_duration / duration_count) if duration_count > 0 else 0
+        
+        # 计算成功率
+        success_rate = (success_count / total_requests * 100) if total_requests > 0 else 0
+        
+        return jsonify({
+            'total_requests': total_requests,
+            'success_count': success_count,
+            'error_count': error_count,
+            'success_rate': round(success_rate, 2),
+            'avg_duration_ms': avg_duration,
+            'model_stats': model_stats,
+            'backend_stats': backend_stats,
+        })
+    
+    except Exception as e:
+        logger.error(f'获取日志统计失败: {e}')
+        return jsonify({'error': {'message': '获取统计失败', 'type': 'server_error'}}), 500
